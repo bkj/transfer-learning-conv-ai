@@ -1,17 +1,19 @@
 # Copyright (c) 2019-present, HuggingFace Inc.
 # All rights reserved. This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
+
+import os
 import json
 import logging
-import os
 import tarfile
 import tempfile
+from tqdm import tqdm
 
 import torch
 
 from pytorch_pretrained_bert import cached_path
 
-PERSONACHAT_URL = "https://s3.amazonaws.com/datasets.huggingface.co/personachat/personachat_self_original.json"
+PERSONACHAT_URL    = "https://s3.amazonaws.com/datasets.huggingface.co/personachat/personachat_self_original.json"
 HF_FINETUNED_MODEL = "https://s3.amazonaws.com/models.huggingface.co/transfer-learning-chatbot/finetuned_chatbot_gpt.tar.gz"
 
 logger = logging.getLogger(__file__)
@@ -46,6 +48,10 @@ def get_dataset(tokenizer, dataset_path, dataset_cache=None):
                 return tokenizer.convert_tokens_to_ids(tokenizer.tokenize(obj))
             if isinstance(obj, dict):
                 return dict((n, tokenize(o)) for n, o in obj.items())
+            
+            if len(obj) > 100:
+                obj = tqdm(obj)
+            
             return list(tokenize(o) for o in obj)
         dataset = tokenize(dataset)
         if dataset_cache:
@@ -71,6 +77,10 @@ def get_dataset_personalities(tokenizer, dataset_path, dataset_cache=None):
                 return tokenizer.convert_tokens_to_ids(tokenizer.tokenize(obj))
             if isinstance(obj, dict):
                 return dict((n, tokenize(o)) for n, o in obj.items())
+            
+            if len(obj) > 100:
+                obj = tqdm(obj)
+            
             return list(tokenize(o) for o in obj)
         personachat = tokenize(personachat)
         torch.save(personachat, dataset_cache)
