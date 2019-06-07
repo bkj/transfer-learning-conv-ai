@@ -68,6 +68,7 @@ def get_dataset(tokenizer, dataset_path, dataset_cache=None):
     
     return dataset
 
+
 def get_dataset_personalities(tokenizer, dataset_path, dataset_cache=None):
     dataset_path  = dataset_path or PERSONACHAT_URL
     dataset_cache = dataset_cache + '_' + type(tokenizer).__name__  # Do avoid using GPT cache for GPT-2 and vice-versa
@@ -84,15 +85,16 @@ def get_dataset_personalities(tokenizer, dataset_path, dataset_cache=None):
         logger.info("Tokenize and encode the dataset")
         personachat = tokenize(tokenizer, personachat)
         torch.save(personachat, dataset_cache)
-
+    
     logger.info("Filter personalities")
     personalities = []
     for dataset in personachat.values():
         for dialog in dataset:
             personalities.append(dialog["personality"])
-
+    
     logger.info("Gathered {} personalities".format(len(personalities)))
     return personalities
+
 
 class AttrDict(dict):
     def __init__(self, *args, **kwargs):

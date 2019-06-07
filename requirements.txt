@@ -1,6 +1,6 @@
-torch
-pytorch-ignite
-pytorch-pretrained-bert >= 0.6.2
-tensorboardX
-tensorflow  # for tensorboardX
-joblib
+torch==1.1.0
+git+https://github.com/pytorch/ignite.git@c5769ba452b7f572545276250b6239a2d83c59fd
+pytorch-pretrained-bert>=0.6.2
+tensorboardX==1.7
+tensorflow
+joblib==0.13.2
