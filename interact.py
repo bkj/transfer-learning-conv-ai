@@ -2,6 +2,7 @@
 # All rights reserved.
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
+
 import logging
 import random
 from argparse import ArgumentParser
@@ -56,91 +57,111 @@ def top_filtering(logits, top_k=0, top_p=0.0, threshold=-float('Inf'), filter_va
 
 def sample_sequence(personality, history, tokenizer, model, args, current_output=None):
     special_tokens_ids = tokenizer.convert_tokens_to_ids(SPECIAL_TOKENS)
+    
     if current_output is None:
         current_output = []
-
+    
     for i in range(args.max_length):
         instance, sequence = build_input_from_segments(personality, history, current_output, tokenizer, with_eos=False)
-
-        input_ids = torch.tensor(instance["input_ids"], device=args.device).unsqueeze(0)
+        
+        input_ids      = torch.tensor(instance["input_ids"], device=args.device).unsqueeze(0)
         token_type_ids = torch.tensor(instance["token_type_ids"], device=args.device).unsqueeze(0)
-
+        
         logits = model(input_ids, token_type_ids=token_type_ids)
-
+        
         if "gpt2" == args.model:
             logits = logits[0]
+        
         logits = logits[0, -1, :] / args.temperature
         logits = top_filtering(logits, top_k=args.top_k, top_p=args.top_p)
-        probs = F.softmax(logits, dim=-1)
-
+        probs  = F.softmax(logits, dim=-1)
+        
         prev = torch.topk(probs, 1)[1] if args.no_sample else torch.multinomial(probs, 1)
         if i < args.min_length and prev.item() in special_tokens_ids:
             while prev.item() in special_tokens_ids:
                 prev = torch.multinomial(probs, num_samples=1)
-
+                
         if prev.item() in special_tokens_ids:
             break
+        
         current_output.append(prev.item())
-
+        
     return current_output
 
-def run():
+
+
+def parse_args():
     parser = ArgumentParser()
-    parser.add_argument("--dataset_path", type=str, default="", help="Path or url of the dataset. If empty download from S3.")
-    parser.add_argument("--dataset_cache", type=str, default='./dataset_cache', help="Path or url of the dataset cache")
-    parser.add_argument("--model", type=str, default="gpt", help="Model type (gpt or gpt2)")
+    parser.add_argument("--dataset_path",     type=str, default="", help="Path or url of the dataset. If empty download from S3.")
+    parser.add_argument("--dataset_cache",    type=str, default='./dataset_cache', help="Path or url of the dataset cache")
+    parser.add_argument("--model",            type=str, default="gpt", help="Model type (gpt or gpt2)")
     parser.add_argument("--model_checkpoint", type=str, default="", help="Path, url or short name of the model")
-    parser.add_argument("--max_history", type=int, default=2, help="Number of previous utterances to keep in history")
-    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device (cuda or cpu)")
+    parser.add_argument("--max_history",      type=int, default=2, help="Number of previous utterances to keep in history")
+    parser.add_argument("--device",           type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device (cuda or cpu)")
+    
+    parser.add_argument("--no_sample",   action='store_true',     help="Set to use greedy decoding instead of sampling")
+    parser.add_argument("--max_length",  type=int,   default=20,  help="Maximum length of the output utterances")
+    parser.add_argument("--min_length",  type=int,   default=1,   help="Minimum length of the output utterances")
+    parser.add_argument("--seed",        type=int,   default=42,  help="Seed")
+    parser.add_argument("--temperature", type=int,   default=0.7, help="Sampling softmax temperature")
+    parser.add_argument("--top_k",       type=int,   default=0,   help="Filter top-k tokens before sampling (<=0: no filtering)")
+    parser.add_argument("--top_p",       type=float, default=0.9, help="Nucleus filtering (top-p) before sampling (<=0.0: no filtering)")
+    return parser.parse_args()
 
-    parser.add_argument("--no_sample", action='store_true', help="Set to use greedy decoding instead of sampling")
-    parser.add_argument("--max_length", type=int, default=20, help="Maximum length of the output utterances")
-    parser.add_argument("--min_length", type=int, default=1, help="Minimum length of the output utterances")
-    parser.add_argument("--seed", type=int, default=42, help="Seed")
-    parser.add_argument("--temperature", type=int, default=0.7, help="Sampling softmax temperature")
-    parser.add_argument("--top_k", type=int, default=0, help="Filter top-k tokens before sampling (<=0: no filtering)")
-    parser.add_argument("--top_p", type=float, default=0.9, help="Nucleus filtering (top-p) before sampling (<=0.0: no filtering)")
-    args = parser.parse_args()
+# --
+# Initialize
 
-    logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger(__file__)
-    logger.info(pformat(args))
+args = parse_args()
 
-    if args.model_checkpoint == "":
-        args.model_checkpoint = download_pretrained_model()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__file__)
+logger.info(pformat(args))
 
-    random.seed(args.seed)
-    torch.random.manual_seed(args.seed)
-    torch.cuda.manual_seed(args.seed)
+if args.model_checkpoint == "":
+    args.model_checkpoint = download_pretrained_model()
 
-    logger.info("Get pretrained model and tokenizer")
-    tokenizer_class = GPT2Tokenizer if "gpt2" == args.model else OpenAIGPTTokenizer
-    tokenizer = tokenizer_class.from_pretrained(args.model_checkpoint)
-    model_class = GPT2LMHeadModel if "gpt2" == args.model else OpenAIGPTLMHeadModel
-    model = model_class.from_pretrained(args.model_checkpoint)
+random.seed(args.seed)
+torch.random.manual_seed(args.seed)
+torch.cuda.manual_seed(args.seed)
 
-    model.to(args.device)
-    model.eval()
+logger.info("Get pretrained model and tokenizer")
 
-    logger.info("Sample a personality")
-    personalities = get_dataset_personalities(tokenizer, args.dataset_path, args.dataset_cache)
-    personality = random.choice(personalities)
-    logger.info("Selected personality: %s", tokenizer.decode(chain(*personality)))
+# --
+# Define model
 
-    history = []
-    while True:
+tokenizer_class = GPT2Tokenizer if "gpt2" == args.model else OpenAIGPTTokenizer
+model_class     = GPT2LMHeadModel if "gpt2" == args.model else OpenAIGPTLMHeadModel
+
+tokenizer = tokenizer_class.from_pretrained(args.model_checkpoint)
+model     = model_class.from_pretrained(args.model_checkpoint).to(args.device)
+_ = model.eval()
+
+# --
+# Select personality
+
+logger.info("Sample a personality")
+
+personalities = get_dataset_personalities(tokenizer, args.dataset_path, args.dataset_cache)
+personality   = random.choice(personalities)
+
+logger.info("Selected personality: %s", tokenizer.decode(chain(*personality)))
+
+# --
+# Run
+
+history = []
+while True:
+    raw_text = input(">>> ")
+    while not raw_text:
+        print('Prompt should not be empty!')
         raw_text = input(">>> ")
-        while not raw_text:
-            print('Prompt should not be empty!')
-            raw_text = input(">>> ")
-        history.append(tokenizer.encode(raw_text))
-        with torch.no_grad():
-            out_ids = sample_sequence(personality, history, tokenizer, model, args)
-        history.append(out_ids)
-        history = history[-(2*args.max_history+1):]
-        out_text = tokenizer.decode(out_ids, skip_special_tokens=True)
-        print(out_text)
-
-
-if __name__ == "__main__":
-    run()
+    
+    history.append(tokenizer.encode(raw_text))
+    
+    with torch.no_grad():
+        out_ids = sample_sequence(personality, history, tokenizer, model, args)
+    
+    history.append(out_ids)
+    history  = history[-(2*args.max_history+1):]
+    out_text = tokenizer.decode(out_ids, skip_special_tokens=True)
+    print(out_text)
