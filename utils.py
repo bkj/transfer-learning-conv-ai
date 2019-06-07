@@ -8,10 +8,13 @@ import logging
 import tarfile
 import tempfile
 from tqdm import tqdm
+from joblib import Parallel, delayed
 
 import torch
 
 from pytorch_pretrained_bert import cached_path
+
+tokenize = None
 
 PERSONACHAT_URL    = "https://s3.amazonaws.com/datasets.huggingface.co/personachat/personachat_self_original.json"
 HF_FINETUNED_MODEL = "https://s3.amazonaws.com/models.huggingface.co/transfer-learning-chatbot/finetuned_chatbot_gpt.tar.gz"
@@ -19,20 +22,19 @@ HF_FINETUNED_MODEL = "https://s3.amazonaws.com/models.huggingface.co/transfer-le
 logger = logging.getLogger(__file__)
 
 def download_pretrained_model():
-    """ Download and extract finetuned model from S3 """
     resolved_archive_file = cached_path(HF_FINETUNED_MODEL)
     tempdir = tempfile.mkdtemp()
-
+    
     logger.info("extracting archive file {} to temp dir {}".format(resolved_archive_file, tempdir))
     with tarfile.open(resolved_archive_file, 'r:gz') as archive:
         archive.extractall(tempdir)
+    
     return tempdir
 
-
 def get_dataset(tokenizer, dataset_path, dataset_cache=None):
-    """ Get PERSONACHAT from S3 """
-    dataset_path = dataset_path or PERSONACHAT_URL
+    dataset_path  = dataset_path or PERSONACHAT_URL
     dataset_cache = dataset_cache + '_' + type(tokenizer).__name__  # Do avoid using GPT cache for GPT-2 and vice-versa
+    
     if dataset_cache and os.path.isfile(dataset_cache):
         logger.info("Load tokenized dataset from cache at %s", dataset_cache)
         dataset = torch.load(dataset_cache)
@@ -43,6 +45,8 @@ def get_dataset(tokenizer, dataset_path, dataset_cache=None):
             dataset = json.loads(f.read())
 
         logger.info("Tokenize and encode the dataset")
+        
+        global tokenize
         def tokenize(obj):
             if isinstance(obj, str):
                 return tokenizer.convert_tokens_to_ids(tokenizer.tokenize(obj))
@@ -50,9 +54,11 @@ def get_dataset(tokenizer, dataset_path, dataset_cache=None):
                 return dict((n, tokenize(o)) for n, o in obj.items())
             
             if len(obj) > 100:
-                obj = tqdm(obj)
+                jobs = [delayed(tokenize)(o) for o in obj]
+                return Parallel(backend='multiprocessing', n_jobs=-1, verbose=10)(jobs)
+            else:
+                return list(tokenize(o) for o in obj)
             
-            return list(tokenize(o) for o in obj)
         dataset = tokenize(dataset)
         if dataset_cache:
             torch.save(dataset, dataset_cache)
@@ -72,6 +78,8 @@ def get_dataset_personalities(tokenizer, dataset_path, dataset_cache=None):
             personachat = json.loads(f.read())
 
         logger.info("Tokenize and encode the dataset")
+        
+        global tokenize
         def tokenize(obj):
             if isinstance(obj, str):
                 return tokenizer.convert_tokens_to_ids(tokenizer.tokenize(obj))
@@ -79,9 +87,11 @@ def get_dataset_personalities(tokenizer, dataset_path, dataset_cache=None):
                 return dict((n, tokenize(o)) for n, o in obj.items())
             
             if len(obj) > 100:
-                obj = tqdm(obj)
-            
-            return list(tokenize(o) for o in obj)
+                jobs = [delayed(tokenize)(o) for o in obj]
+                return Parallel(backend='multiprocessing', n_jobs=-1, verbose=10)(jobs)
+            else:
+                return list(tokenize(o) for o in obj)
+        
         personachat = tokenize(personachat)
         torch.save(personachat, dataset_cache)
 
@@ -98,3 +108,4 @@ class AttrDict(dict):
     def __init__(self, *args, **kwargs):
         super(AttrDict, self).__init__(*args, **kwargs)
         self.__dict__ = self
+
