@@ -14,12 +14,26 @@ import torch
 
 from pytorch_pretrained_bert import cached_path
 
-tokenize = None
-
 PERSONACHAT_URL    = "https://s3.amazonaws.com/datasets.huggingface.co/personachat/personachat_self_original.json"
 HF_FINETUNED_MODEL = "https://s3.amazonaws.com/models.huggingface.co/transfer-learning-chatbot/finetuned_chatbot_gpt.tar.gz"
 
 logger = logging.getLogger(__file__)
+
+# --
+# Helpers
+
+def tokenize(tokenizer, obj):
+    if isinstance(obj, str):
+        return tokenizer.convert_tokens_to_ids(tokenizer.tokenize(obj))
+    if isinstance(obj, dict):
+        return dict((n, tokenize(o)) for n, o in obj.items())
+    
+    if len(obj) > 100:
+        jobs = [delayed(tokenize)(tokenizer, o) for o in obj]
+        return Parallel(backend='multiprocessing', n_jobs=-1, verbose=10)(jobs)
+    else:
+        return list(tokenize(o) for o in obj)
+
 
 def download_pretrained_model():
     resolved_archive_file = cached_path(HF_FINETUNED_MODEL)
@@ -30,6 +44,9 @@ def download_pretrained_model():
         archive.extractall(tempdir)
     
     return tempdir
+
+# --
+# Dataset utilities
 
 def get_dataset(tokenizer, dataset_path, dataset_cache=None):
     dataset_path  = dataset_path or PERSONACHAT_URL
@@ -43,31 +60,18 @@ def get_dataset(tokenizer, dataset_path, dataset_cache=None):
         personachat_file = cached_path(dataset_path)
         with open(personachat_file, "r", encoding="utf-8") as f:
             dataset = json.loads(f.read())
-
-        logger.info("Tokenize and encode the dataset")
         
-        global tokenize
-        def tokenize(obj):
-            if isinstance(obj, str):
-                return tokenizer.convert_tokens_to_ids(tokenizer.tokenize(obj))
-            if isinstance(obj, dict):
-                return dict((n, tokenize(o)) for n, o in obj.items())
-            
-            if len(obj) > 100:
-                jobs = [delayed(tokenize)(o) for o in obj]
-                return Parallel(backend='multiprocessing', n_jobs=-1, verbose=10)(jobs)
-            else:
-                return list(tokenize(o) for o in obj)
-            
-        dataset = tokenize(dataset)
+        logger.info("Tokenize and encode the dataset")
+        dataset = tokenize(tokenizer, dataset)
         if dataset_cache:
             torch.save(dataset, dataset_cache)
+    
     return dataset
 
 def get_dataset_personalities(tokenizer, dataset_path, dataset_cache=None):
-    """ Get personalities from PERSONACHAT """
-    dataset_path = dataset_path or PERSONACHAT_URL
+    dataset_path  = dataset_path or PERSONACHAT_URL
     dataset_cache = dataset_cache + '_' + type(tokenizer).__name__  # Do avoid using GPT cache for GPT-2 and vice-versa
+    
     if os.path.isfile(dataset_cache):
         logger.info("Load tokenized dataset from cache at %s", dataset_cache)
         personachat = torch.load(dataset_cache)
@@ -76,23 +80,9 @@ def get_dataset_personalities(tokenizer, dataset_path, dataset_cache=None):
         personachat_file = cached_path(dataset_path)
         with open(personachat_file, "r", encoding="utf-8") as f:
             personachat = json.loads(f.read())
-
-        logger.info("Tokenize and encode the dataset")
-        
-        global tokenize
-        def tokenize(obj):
-            if isinstance(obj, str):
-                return tokenizer.convert_tokens_to_ids(tokenizer.tokenize(obj))
-            if isinstance(obj, dict):
-                return dict((n, tokenize(o)) for n, o in obj.items())
             
-            if len(obj) > 100:
-                jobs = [delayed(tokenize)(o) for o in obj]
-                return Parallel(backend='multiprocessing', n_jobs=-1, verbose=10)(jobs)
-            else:
-                return list(tokenize(o) for o in obj)
-        
-        personachat = tokenize(personachat)
+        logger.info("Tokenize and encode the dataset")
+        personachat = tokenize(tokenizer, personachat)
         torch.save(personachat, dataset_cache)
 
     logger.info("Filter personalities")
