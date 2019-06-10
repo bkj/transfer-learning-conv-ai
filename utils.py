@@ -26,13 +26,13 @@ def tokenize(tokenizer, obj):
     if isinstance(obj, str):
         return tokenizer.convert_tokens_to_ids(tokenizer.tokenize(obj))
     if isinstance(obj, dict):
-        return dict((n, tokenize(o)) for n, o in obj.items())
+        return dict((n, tokenize(tokenizer, o)) for n, o in obj.items())
     
     if len(obj) > 100:
         jobs = [delayed(tokenize)(tokenizer, o) for o in obj]
         return Parallel(backend='multiprocessing', n_jobs=-1, verbose=10)(jobs)
     else:
-        return list(tokenize(o) for o in obj)
+        return list(tokenize(tokenizer, o) for o in obj)
 
 
 def download_pretrained_model():
