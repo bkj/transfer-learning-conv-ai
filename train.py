@@ -5,7 +5,6 @@ import os
 import math
 import json
 import logging
-from tqdm import tqdm
 from pprint import pformat
 from itertools import chain
 from argparse import ArgumentParser
@@ -146,7 +145,7 @@ def get_data_loaders(args, tokenizer):
         
         datasets[dataset_name]["num_candidates"] = num_candidates
         
-        for dialog in tqdm(dataset):
+        for dialog in dataset:
             persona = dialog["personality"].copy()
             for _ in range(args.personality_permutations):
                 for utterance in dialog["utterances"]:
