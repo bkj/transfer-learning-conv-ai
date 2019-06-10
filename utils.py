@@ -3,11 +3,13 @@
 # LICENSE file in the root directory of this source tree.
 
 import os
+import sys
 import json
 import logging
 import tarfile
 import tempfile
-from tqdm import tqdm
+import numpy as np
+from itertools import chain
 from joblib import Parallel, delayed
 
 import torch
@@ -25,12 +27,14 @@ logger = logging.getLogger(__file__)
 def tokenize(tokenizer, obj):
     if isinstance(obj, str):
         return tokenizer.convert_tokens_to_ids(tokenizer.tokenize(obj))
+    
     if isinstance(obj, dict):
         return dict((n, tokenize(tokenizer, o)) for n, o in obj.items())
     
-    if len(obj) > 100:
-        jobs = [delayed(tokenize)(tokenizer, o) for o in obj]
-        return Parallel(backend='multiprocessing', n_jobs=-1, verbose=10)(jobs)
+    if len(obj) > 1000:
+        jobs = [delayed(tokenize)(tokenizer, o) for o in np.array_split(obj, 256)]
+        res  = Parallel(backend='multiprocessing', n_jobs=-1, verbose=10)(jobs)
+        return list(chain(*res))
     else:
         return list(tokenize(tokenizer, o) for o in obj)
 
@@ -64,6 +68,7 @@ def get_dataset(tokenizer, dataset_path, dataset_cache=None):
         logger.info("Tokenize and encode the dataset")
         dataset = tokenize(tokenizer, dataset)
         if dataset_cache:
+            logger.info("Saving to %s" % dataset_cache)
             torch.save(dataset, dataset_cache)
     
     return dataset
