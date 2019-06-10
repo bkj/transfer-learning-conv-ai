@@ -58,9 +58,9 @@ def average_distributed_scalar(scalar, args):
     if args.local_rank == -1:
         return scalar
     
+    scalar_t = torch.tensor(scalar, dtype=torch.float, device=args.device) / torch.distributed.get_world_size()
     torch.distributed.all_reduce(scalar_t, op=torch.distributed.ReduceOp.SUM)
     return scalar_t.item()
-
 
 def build_input_from_segments(persona, history, reply, tokenizer, lm_labels=False, with_eos=True):
     bos, eos, speaker1, speaker2 = tokenizer.convert_tokens_to_ids(SPECIAL_TOKENS[:-1])
@@ -260,7 +260,7 @@ def train():
         
         return loss.item()
     
-    VERBOSE = True
+    VERBOSE = False
     def inference(engine, batch):
         _ = model.eval()
         with torch.no_grad():
